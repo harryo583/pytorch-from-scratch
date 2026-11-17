@@ -1,4 +1,3 @@
-
 import numpy as np
 
 class Tensor:
@@ -8,7 +7,7 @@ class Tensor:
 
         self.grad = None
 
-        # Autograd graph
+        # build autograd graph
         self._prev = tuple(_children)
         self._op = _op
         self._backward = lambda: None
@@ -24,7 +23,7 @@ class Tensor:
     def __repr__(self):
         return (f"Tensor({self.data}, requires_grad={self.requires_grad})")
 
-    # ---------- Arithmetic ----------
+    # Aithmetic
 
     def __add__(self, other):
         raise NotImplementedError
