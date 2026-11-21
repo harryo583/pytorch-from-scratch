@@ -52,10 +52,10 @@ class TestStage02AutogradUtilities(unittest.TestCase):
     def test_topological_sort_is_parent_first_and_deduplicated(self):
         a = Tensor(1, requires_grad=True)
         b = Tensor(2, requires_grad=True)
-        shared = Tensor(3, _children=(a, b), _op="shared")
-        left = Tensor(4, _children=(shared,), _op="left")
-        right = Tensor(5, _children=(shared, b), _op="right")
-        root = Tensor(6, _children=(left, right), _op="root")
+        shared = Tensor(3, _parents=(a, b), _op="shared")
+        left = Tensor(4, _parents=(shared,), _op="left")
+        right = Tensor(5, _parents=(shared, b), _op="right")
+        root = Tensor(6, _parents=(left, right), _op="root")
 
         order = topological_sort(root)
         self.assertEqual(len(order), 6)
@@ -86,6 +86,13 @@ class TestStage03TensorArithmetic(unittest.TestCase):
         assert_array_close(self, (-x).data, [-1, -2, -3])
         assert_array_close(self, (10 - x).data, [9, 8, 7])
         assert_array_close(self, (x**3).data, [1, 8, 27])
+
+    def test_tensor_exponents_and_reflected_power(self):
+        base = Tensor([2, 3, 4])
+        exponent = Tensor([3, 2, 0.5])
+
+        assert_array_close(self, (base**exponent).data, [8, 9, 2])
+        assert_array_close(self, (2**Tensor([1, 2, 3])).data, [2, 4, 8])
 
     def test_requires_grad_propagates(self):
         constant = Tensor([1, 2])
@@ -118,6 +125,20 @@ class TestStage04ScalarAutograd(unittest.TestCase):
         ((x**4) - y - x).backward()
         assert_array_close(self, x.grad, 31.0)
         assert_array_close(self, y.grad, -1.0)
+
+    def test_tensor_exponent_gradients(self):
+        base = Tensor(2.0, requires_grad=True)
+        exponent = Tensor(3.0, requires_grad=True)
+        (base**exponent).backward()
+
+        assert_array_close(self, base.grad, 12.0)
+        assert_array_close(self, exponent.grad, 8.0 * np.log(2.0))
+
+    def test_reflected_power_gradient(self):
+        exponent = Tensor(3.0, requires_grad=True)
+        (2**exponent).backward()
+
+        assert_array_close(self, exponent.grad, 8.0 * np.log(2.0))
 
     def test_leaf_gradients_accumulate_across_backward_calls(self):
         x = Tensor(2.0, requires_grad=True)
@@ -154,6 +175,26 @@ class TestStage05BroadcastAndReductionAutograd(unittest.TestCase):
         y = Tensor(np.arange(6).reshape(2, 3), requires_grad=True)
         y.mean(axis=0).sum().backward()
         assert_array_close(self, y.grad, np.full((2, 3), 0.5))
+
+    def test_power_broadcasts_and_reduces_both_gradients(self):
+        base_data = np.array([[2.0], [3.0]])
+        exponent_data = np.array([1.0, 2.0, 3.0])
+        base = Tensor(base_data, requires_grad=True)
+        exponent = Tensor(exponent_data, requires_grad=True)
+
+        result = base**exponent
+        self.assertEqual(result.shape, (2, 3))
+        assert_array_close(self, result.data, base_data**exponent_data)
+        result.sum().backward()
+
+        expected_base_grad = (
+            exponent_data * base_data ** (exponent_data - 1)
+        ).sum(axis=1, keepdims=True)
+        expected_exponent_grad = (
+            base_data**exponent_data * np.log(base_data)
+        ).sum(axis=0)
+        assert_array_close(self, base.grad, expected_base_grad)
+        assert_array_close(self, exponent.grad, expected_exponent_grad)
 
 
 class TestStage06MatmulAutograd(unittest.TestCase):
