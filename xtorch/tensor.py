@@ -39,10 +39,10 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 grad = unbroadcast(out.grad, self.shape)
-                self.grad = grad if self.grad is None else self.grad + grad
+                self.grad = grad if self.grad is None else (self.grad if grad is None else self.grad + grad)
             if other.requires_grad:
                 grad = unbroadcast(out.grad, other.shape)
-                other.grad = grad if other.grad is None else other.grad + grad
+                other.grad = grad if other.grad is None else (other.grad if grad is None else other.grad + grad)
         
         out._backward = _backward
         
@@ -105,7 +105,35 @@ class Tensor:
         return Tensor(other) - self
 
     def __matmul__(self, other) -> Tensor:
-        raise NotImplementedError
+        if not isinstance(other, Tensor):
+            other = Tensor(other)
+            
+        if self.ndim > 2 or other.ndim > 2:
+            raise ValueError("Matmul only supports 2d matrix multiplications for now")
+        
+        out = Tensor(
+            self.data @ other.data,
+            requires_grad=self.requires_grad or other.requires_grad,
+            _parents=(self, other),
+            _op='@',
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                grad = np.atleast_2d(out.grad) @ np.atleast_2d(other.data).T
+                grad = grad.reshape(self.shape)
+                self.grad = grad if self.grad is None else self.grad + grad
+            if other.requires_grad:
+                grad = np.atleast_2d(self.data).T @ np.atleast_2d(out.grad)
+                grad = grad.reshape(other.shape)
+                other.grad = grad if other.grad is None else other.grad + grad
+        
+        out._backward = _backward
+        
+        return out
+        
     
     def __pow__(self, exponent) -> "Tensor":
         if not isinstance(exponent, Tensor):
@@ -138,32 +166,6 @@ class Tensor:
         return Tensor(base) ** self
 
 
-    def __po1w__(self, exponent) -> Tensor:
-        if not isinstance(exponent, Tensor):
-            exponent = Tensor(exponent)
-        
-        out = Tensor(
-            self.data ** exponent.data,
-            requires_grad=self.requires_grad or exponent.requires_grad,
-            _parents=(self, exponent),
-            _op="pow",
-        )
-        
-        def _backward():
-            if self.requires_grad:
-                if out.grad is None:
-                    raise RuntimeError("Output gradient has not been initialized")
-                grad = out.grad * exponent.data * self.data ** (exponent.data - 1)
-                grad = unbroadcast(grad, self.shape)
-                self.grad = grad if self.grad is None else self.grad + grad
-            
-            if exponent.requires_grad:
-                pass
-        
-        out._backward = _backward
-                
-        return out
-
     # ---------- Reductions ----------
 
     def sum(self, axis=None, keepdims=False) -> Tensor:
@@ -175,11 +177,18 @@ class Tensor:
         )
         
         def _backward():
-            if self.requires_grad:
-                if out.grad is None:
-                    raise RuntimeError("Output gradient has not been initialized")
-                grad = unbroadcast(out.grad, self.data.shape)
-                self.grad = grad if self.grad is None else self.grad + grad
+            if not self.requires_grad:
+                return
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            grad = out.grad
+            if axis is not None and not keepdims:
+                axis_tuple = (axis,) if isinstance(axis, int) else tuple(axis)
+                axis_tuple = tuple(a if a >= 0 else a + self.ndim for a in axis_tuple)
+                for a in sorted(axis_tuple):
+                    grad = np.expand_dims(grad, axis=a)
+            grad = np.broadcast_to(grad, self.shape).copy()
+            self.grad = grad if self.grad is None else self.grad + grad
         
         out._backward = _backward
         
@@ -200,10 +209,43 @@ class Tensor:
     # ---------- Shape operations ----------
 
     def reshape(self, *shape):
-        raise NotImplementedError
+        out = Tensor(
+            self.data.reshape(*shape),
+            requires_grad=self.requires_grad,
+            _parents=(self,),
+            _op="reshape",
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                grad = out.grad.reshape(self.shape)
+                self.grad = grad if self.grad is None else self.grad + grad
+        
+        out._backward = _backward
+        
+        return out
 
     def transpose(self, *axes):
-        raise NotImplementedError
+        out = Tensor(
+            self.data.transpose(*axes),
+            requires_grad=self.requires_grad,
+            _parents=(self,),
+            _op="transpose",
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                inverse_perm = np.argsort(axes)
+                grad = out.grad.transpose(*inverse_perm)
+                self.grad = grad if self.grad is None else self.grad + grad
+        
+        out._backward = _backward
+        
+        return out
 
     @property
     def T(self):
@@ -212,16 +254,77 @@ class Tensor:
     # ---------- Activations ----------
 
     def relu(self):
-        raise NotImplementedError
+        out = Tensor(
+            max(self.data, 0),
+            requires_grad=self.requires_grad,
+            _parents=(self,),
+            _op="relu",
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                grad = []
+                self.grad = grad if self.grad is None else self.grad + grad
+        
+        return out
+
 
     def exp(self):
-        raise NotImplementedError
+        out = Tensor(
+            np.exp(self.data),
+            requires_grad=self.requires_grad,
+            _parents=(self,),
+            _op="exp",
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                grad = []
+                self.grad = grad if self.grad is None else self.grad + grad
+        
+        return out
+
 
     def log(self):
-        raise NotImplementedError
+        out = Tensor(
+            np.log(self.data),
+            requires_grad=self.requires_grad,
+            _parents=(self,),
+            _op="log",
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                grad = []
+                self.grad = grad if self.grad is None else self.grad + grad
+        
+        return out
+    
 
     def tanh(self):
-        raise NotImplementedError
+        out = Tensor(
+            np.tanh(self.data),
+            requires_grad=self.requires_grad,
+            _parents=(self,),
+            _op="tanh",
+        )
+        
+        def _backward():
+            if out.grad is None:
+                raise RuntimeError("Output gradient has not been initialized")
+            if self.requires_grad:
+                grad = []
+                self.grad = grad if self.grad is None else self.grad + grad
+        
+        out._backward = _backward()
+        
+        return out
 
     # ---------- Autograd ----------
 
