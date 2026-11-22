@@ -251,11 +251,12 @@ class Tensor:
     def T(self):
         return self.transpose()
 
+
     # ---------- Activations ----------
 
     def relu(self):
         out = Tensor(
-            max(self.data, 0),
+            np.maximum(self.data, 0),
             requires_grad=self.requires_grad,
             _parents=(self,),
             _op="relu",
@@ -265,8 +266,10 @@ class Tensor:
             if out.grad is None:
                 raise RuntimeError("Output gradient has not been initialized")
             if self.requires_grad:
-                grad = []
+                grad = out.grad * (self.data > 0)
                 self.grad = grad if self.grad is None else self.grad + grad
+        
+        out._backward = _backward
         
         return out
 
@@ -283,8 +286,10 @@ class Tensor:
             if out.grad is None:
                 raise RuntimeError("Output gradient has not been initialized")
             if self.requires_grad:
-                grad = []
+                grad = out.grad * out.data
                 self.grad = grad if self.grad is None else self.grad + grad
+        
+        out._backward = _backward
         
         return out
 
@@ -301,8 +306,10 @@ class Tensor:
             if out.grad is None:
                 raise RuntimeError("Output gradient has not been initialized")
             if self.requires_grad:
-                grad = []
+                grad = out.grad * np.pow(self.data, -1)
                 self.grad = grad if self.grad is None else self.grad + grad
+                
+        out._backward = _backward
         
         return out
     
@@ -319,10 +326,10 @@ class Tensor:
             if out.grad is None:
                 raise RuntimeError("Output gradient has not been initialized")
             if self.requires_grad:
-                grad = []
+                grad = out.grad * (1 - out.data ** 2)
                 self.grad = grad if self.grad is None else self.grad + grad
         
-        out._backward = _backward()
+        out._backward = _backward
         
         return out
 
