@@ -426,6 +426,10 @@ class TestStage13EndToEndTraining(unittest.TestCase):
         final_loss = float(criterion(model(x), target).data)
         self.assertLess(final_loss, initial_loss * 0.01)
         self.assertLess(final_loss, 0.02)
+
+        # Run the shorter training check from a fresh, deterministic model.
+        np.random.seed(7)
+        model = nn.Sequential(nn.Linear(1, 8), nn.Tanh(), nn.Linear(8, 1))
         optimizer = optim.Adam(model.parameters(), lr=0.03)
         criterion = nn.MSELoss()
 
